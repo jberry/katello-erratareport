@@ -1,0 +1,112 @@
+#!/usr/bin/env ruby
+
+=begin
+
+Program: katello-erratareport
+Author: Jason Berry <jberry86@gmail.com>
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+=end
+
+require 'optparse'
+require 'yaml'
+require 'apipie-bindings'
+
+
+@defaults = {
+    :uri            => 'https://localhost/',
+    :timeout        => 300,
+    :user           => 'admin',
+    :pass           => 'changeme',
+    :org            => 1,
+}
+
+@options = {
+    :yamlfile  => 'erratareport.yaml',
+}
+
+optparse = OptionParser.new do |opts|
+    opts.banner = "Usage: #{opts.program_name} ACTION [options]"
+    opts.version = "0.1"
+
+    opts.separator ""
+    opts.separator ""
+
+    opts.on("-U", "--uri=URI", "URI to the Katello") do |u|
+        @options[:uri] = u
+    end
+    opts.on("-t", "--timeout=TIMEOUT", "Timeout value in seconds for any API calls. -1 means never timeout") do |t|
+        @options[:timeout] = t
+    end
+    opts.on("-u", "--user=USER", "User to log in to Katello") do |u|
+        @options[:user] = u
+    end
+    opts.on("-p", "--pass=PASS", "Password to log in to Katello") do |p|
+        @options[:pass] = p
+    end
+    opts.on("-o", "--organization-id=ID", "ID of the Organization to clean up") do |o|
+        @options[:org] = o
+    end
+    opts.on("-c", "--config=FILE", "configuration in YAML format") do |c|
+        @options[:yamlfile] = c
+    end
+    opts.on("-E", "--errata a,b,c", Array, "Array of CVE's searching for; Pass multiple comma seperated") do |e|
+        @options[:errata] = e.map { |v| v.to_s }
+    end
+end
+optparse.parse!
+
+@yaml = YAML.load_file(@options[:yamlfile])
+
+if @yaml.has_key?(:settings) and @yaml[:settings].is_a?(Hash)
+    @yaml[:settings].each do |key,val|
+        if not @options.has_key?(key)
+            @options[key] = val
+        end
+    end
+end
+
+@defaults.each do |key,val|
+    if not @options.has_key?(key)
+        @options[key] = val
+    end
+end
+
+if @options[:errata].nil?
+    puts "You must pass at least one errata to -E"
+    puts optparse.help
+    exit
+end
+
+#This returns the apipie connection object.  It's used by most functions, so it gets it's own so fixes/changes can happen in one place
+def build_connection()
+    return ApipieBindings::API.new({:uri => @options[:uri], :username => @options[:user], :password => @options[:pass], :api_version => '2', :timeout => @options[:timeout]})
+end
+
+#The main brains of this tool.  This is what does the actual product syncing
+def errata_report()
+    apiconn = build_connection
+    puts "CVE,VendorErrata,HostName,Environment,ContentViewName"
+    @options[:errata].each do |errataname|
+        erratum = apiconn.resource(:errata).call(:index, {:cve => "#{errataname}"})
+        erratum['results'].each do |errata|
+            seid = errata['errata_id']
+            eid = errata['id']
+            hosts = apiconn.resource(:systems).call(:index, {:organization_id => @options[:org], :erratum_id => eid, :fields => "full"})
+            hosts['results'].each do |host|
+                puts "#{errataname},#{seid},#{host['name']},#{host['environment']['name']},#{host['content_view']['name']}"
+            end
+        end
+    end
+end
+
+errata_report

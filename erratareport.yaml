@@ -1,0 +1,7 @@
+---
+:settings:
+    :user: myuser
+    :pass: mypass
+    :uri: https://localhost
+    :timeout: 300
+    :org: 1
